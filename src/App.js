@@ -305,6 +305,9 @@ export default function App(){
   const [toast,setToast]=useState(null);
 
   const [newRole,setNewRole]=useState("");
+  const [inviteLoading,setInviteLoading]=useState(false);
+  const [inviteSent,setInviteSent]=useState({});
+
   const [newEmp,setNewEmp]=useState({name:"",role:"Sales Associate",wage:"",email:""});
   const [toReq,setToReq]=useState({from:"",to:"",reason:""});
 
@@ -313,6 +316,7 @@ export default function App(){
 
   // Edit employee modal
   const [editEmp,setEditEmp]=useState(null);
+  const [deleteConfirm,setDeleteConfirm]=useState(null); // emp object to confirm delete
 
   const activeSess=sessions.find(s=>s.emp_id===authUser?.id&&!s.clock_out);
   const myRecord=employees.find(e=>e.auth_id===authUser?.id);
@@ -445,13 +449,72 @@ export default function App(){
     const parts=newEmp.name.trim().split(" ");
     const initials=(parts[0][0]+(parts[1]?parts[1][0]:"")).toUpperCase();
     const {data}=await supabase.from("employees").insert({name:newEmp.name.trim(),role:newEmp.role,wage:parseFloat(newEmp.wage),email:newEmp.email,initials,auth_id:null}).select().single();
-    if(data){setEmployees(e=>[...e,data]);setNewEmp({name:"",role:roles[0],wage:"",email:""});showToast("Employee added");}
+    if(data){
+      setEmployees(e=>[...e,data]);
+      setNewEmp({name:"",role:roles[0],wage:"",email:""});
+      showToast("Employee added");
+      if(newEmp.email) sendInvite(data);
+    }
   };
 
   const saveEditEmp=async()=>{
     if(!editEmp) return;
     const {data}=await supabase.from("employees").update({role:editEmp.role,wage:parseFloat(editEmp.wage),name:editEmp.name}).eq("id",editEmp.id).select().single();
     if(data){setEmployees(e=>e.map(x=>x.id===editEmp.id?data:x));setEditEmp(null);showToast("Employee updated");}
+  };
+
+
+  // ── SEND INVITE EMAIL ─────────────────────────────────────────────────────
+  const sendInvite=async(emp)=>{
+    if(!emp.email){showToast("No email on file for this employee","error");return;}
+    setInviteLoading(true);
+    try{
+      const res=await fetch("https://eejgscizdswwgwwrlczm.supabase.co/functions/v1/invite-employee",{
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "Authorization":`Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlamdzY2l6ZHN3d2d3d3JsY3ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NDI4NzAsImV4cCI6MjA5NjQxODg3MH0.0_KEY6jdyORXYcnYEh7EOf4sX__0QemA0b2qPSO8Onw`,
+        },
+        body:JSON.stringify({email:emp.email,name:emp.name}),
+      });
+      const json=await res.json();
+      if(json.ok){
+        setInviteSent(s=>({...s,[emp.id]:true}));
+        showToast(`Invite sent to ${emp.email} ✓`);
+      } else {
+        showToast(json.error||"Failed to send invite","error");
+      }
+    }catch(e){
+      showToast("Failed to send invite","error");
+    }
+    setInviteLoading(false);
+  };
+
+
+  // ── DELETE EMPLOYEE ───────────────────────────────────────────────────────
+  const deleteEmployee=async(emp)=>{
+    // Delete their sessions, time off, shifts, and employee record
+    await supabase.from("sessions").delete().eq("emp_id", emp.auth_id||emp.id);
+    await supabase.from("time_off").delete().eq("emp_id", emp.auth_id||emp.id);
+    await supabase.from("shifts").delete().eq("emp_id", emp.auth_id||emp.id);
+    await supabase.from("employees").delete().eq("id", emp.id);
+    // If they have an auth account, disable it via admin
+    if(emp.auth_id){
+      await fetch(`https://eejgscizdswwgwwrlczm.supabase.co/functions/v1/delete-employee`,{
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          "Authorization":`Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlamdzY2l6ZHN3d2d3d3JsY3ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NDI4NzAsImV4cCI6MjA5NjQxODg3MH0.0_KEY6jdyORXYcnYEh7EOf4sX__0QemA0b2qPSO8Onw`,
+        },
+        body:JSON.stringify({userId:emp.auth_id, email:emp.email, name:emp.name}),
+      });
+    }
+    setEmployees(e=>e.filter(x=>x.id!==emp.id));
+    setSessions(s=>s.filter(x=>x.emp_id!==(emp.auth_id||emp.id)));
+    setShifts(s=>s.filter(x=>x.emp_id!==(emp.auth_id||emp.id)));
+    setTimeOff(t=>t.filter(x=>x.emp_id!==(emp.auth_id||emp.id)));
+    setDeleteConfirm(null);
+    showToast(`${emp.name} has been removed from the system`);
   };
 
   // ── SHIFTS ────────────────────────────────────────────────────────────────────
@@ -723,8 +786,14 @@ export default function App(){
                     ))}
                   </div>
                   {isAdmin&&(
-                    <div style={{marginTop:12}}>
+                    <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:8}}>
                       <Btn full size="sm" variant="ghost" onClick={()=>setEditEmp({...emp})}>✏ Edit Role / Wage</Btn>
+                      {emp.email&&(
+                        <Btn full size="sm" variant="danger" disabled={inviteSent[emp.id]||inviteLoading} onClick={()=>sendInvite(emp)}>
+                          {inviteSent[emp.id]?"✓ Invite Sent":"✉ Send Invite Email"}
+                        </Btn>
+                      )}
+                      <Btn full size="sm" onClick={()=>setDeleteConfirm(emp)} style={{background:"transparent",color:"#ef5350",border:"1px solid #ef535055",fontSize:12}}>🗑 Remove / Terminate Employee</Btn>
                     </div>
                   )}
                 </Card>
@@ -825,9 +894,9 @@ export default function App(){
             {employees.filter(e=>e.role==="Pending").length>0&&(
               <div style={{padding:"14px 18px",background:C.warningDim,border:`1px solid ${C.warning}44`,borderRadius:4,display:"flex",alignItems:"center",gap:12}}>
                 <span style={{fontSize:20}}>⚠</span>
-                <div>
+                <div style={{flex:1}}>
                   <div style={{fontWeight:700,color:C.warning}}>{employees.filter(e=>e.role==="Pending").length} employee(s) awaiting role assignment</div>
-                  <div style={{fontSize:12,color:C.midGray,marginTop:2}}>Go to the Team tab and click "Edit Role / Wage" to assign them.</div>
+                  <div style={{fontSize:12,color:C.midGray,marginTop:2}}>Go to the <strong>Team tab</strong> and click "Edit Role / Wage" to assign them. Use "Send Invite Email" to send them a signup link.</div>
                 </div>
               </div>
             )}
@@ -842,7 +911,10 @@ export default function App(){
                 <Field label="Hourly Wage ($)" type="number" value={newEmp.wage} onChange={e=>setNewEmp(n=>({...n,wage:e.target.value}))} placeholder="17.50"/>
                 <Field label="Email" type="email" value={newEmp.email} onChange={e=>setNewEmp(n=>({...n,email:e.target.value}))} placeholder="emp@email.com"/>
               </div>
-              <div style={{marginTop:16}}><Btn onClick={addEmployee}>+ Add Employee</Btn></div>
+              <div style={{marginTop:16,display:"flex",gap:12,alignItems:"center"}}>
+                <Btn onClick={addEmployee}>+ Add &amp; Send Invite</Btn>
+                <span style={{fontSize:12,color:C.midGray}}>An invite email will be sent to the employee automatically</span>
+              </div>
             </Card>
 
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
@@ -878,6 +950,27 @@ export default function App(){
 
       </div>
     </div>
+
+
+    {/* DELETE CONFIRM MODAL */}
+    {deleteConfirm&&(
+      <div style={{position:"fixed",inset:0,background:"#000000dd",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{background:"#1C1C1C",border:"1px solid #D32F2F",borderRadius:4,padding:32,width:"100%",maxWidth:420,animation:"tickIn .2s ease"}}>
+          <div style={{fontSize:28,textAlign:"center",marginBottom:12}}>⚠️</div>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2,textAlign:"center",color:"#ef5350",marginBottom:8}}>CONFIRM TERMINATION</div>
+          <div style={{fontSize:14,color:"#9E9E9E",textAlign:"center",lineHeight:1.7,marginBottom:24}}>
+            You are about to permanently remove<br/>
+            <strong style={{color:"#fff",fontSize:16}}>{deleteConfirm.name}</strong><br/>
+            from the system.<br/><br/>
+            <span style={{color:"#ef5350"}}>This will delete all their shifts, sessions, time off records, and revoke their access. This cannot be undone.</span>
+          </div>
+          <div style={{display:"flex",gap:12}}>
+            <button onClick={()=>setDeleteConfirm(null)} style={{flex:1,padding:"12px",background:"transparent",border:"1px solid #2a2a2a",borderRadius:2,color:"#9E9E9E",cursor:"pointer",fontFamily:"'Barlow',sans-serif",fontWeight:700,fontSize:14}}>Cancel</button>
+            <button onClick={()=>deleteEmployee(deleteConfirm)} style={{flex:1,padding:"12px",background:"#D32F2F",border:"none",borderRadius:2,color:"#fff",cursor:"pointer",fontFamily:"'Barlow',sans-serif",fontWeight:700,fontSize:14,letterSpacing:.5}}>Yes, Terminate</button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* SHIFT MODAL */}
     {shiftModal&&(
