@@ -473,26 +473,36 @@ export default function App(){
 
   // ── SEND INVITE EMAIL ─────────────────────────────────────────────────────
   const sendInvite=async(emp)=>{
-    if(!emp.email){showToast("No email on file for this employee","error");return;}
+    if(!emp||!emp.email){showToast("No email on file for this employee","error");return;}
     setInviteLoading(true);
     try{
+      const controller=new AbortController();
+      const timeoutId=setTimeout(()=>controller.abort(),15000);
       const res=await fetch("https://eejgscizdswwgwwrlczm.supabase.co/functions/v1/invite-employee",{
         method:"POST",
+        signal:controller.signal,
         headers:{
           "Content-Type":"application/json",
           "Authorization":`Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlamdzY2l6ZHN3d2d3d3JsY3ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NDI4NzAsImV4cCI6MjA5NjQxODg3MH0.0_KEY6jdyORXYcnYEh7EOf4sX__0QemA0b2qPSO8Onw`,
         },
         body:JSON.stringify({email:emp.email,name:emp.name}),
       });
-      const json=await res.json();
-      if(json.ok){
+      clearTimeout(timeoutId);
+      let json={};
+      try{ json=await res.json(); }catch(e){ json={}; }
+      if(res.ok&&json.ok){
         setInviteSent(s=>({...s,[emp.id]:true}));
         showToast(`Invite sent to ${emp.email} ✓`);
       } else {
-        showToast(json.error||"Failed to send invite","error");
+        const errMsg=typeof json.error==="string"?json.error:JSON.stringify(json.error)||"Failed to send invite";
+        showToast(errMsg,"error");
       }
     }catch(e){
-      showToast("Failed to send invite","error");
+      if(e.name==="AbortError"){
+        showToast("Request timed out — check Edge Function logs","error");
+      } else {
+        showToast("Failed to send invite: "+e.message,"error");
+      }
     }
     setInviteLoading(false);
   };
