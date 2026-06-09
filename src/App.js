@@ -493,12 +493,12 @@ export default function App(){
 
   // ── DELETE EMPLOYEE ───────────────────────────────────────────────────────
   const deleteEmployee=async(emp)=>{
-    // Delete their sessions, time off, shifts, and employee record
-    await supabase.from("sessions").delete().eq("emp_id", emp.auth_id||emp.id);
-    await supabase.from("time_off").delete().eq("emp_id", emp.auth_id||emp.id);
-    await supabase.from("shifts").delete().eq("emp_id", emp.auth_id||emp.id);
-    await supabase.from("employees").delete().eq("id", emp.id);
-    // If they have an auth account, disable it via admin
+    // Mark employee as terminated (keeps all history for payroll records)
+    await supabase.from("employees").update({
+      role:"Terminated",
+      terminated_at: new Date().toISOString(),
+    }).eq("id", emp.id);
+    // Revoke their login access only
     if(emp.auth_id){
       await fetch(`https://eejgscizdswwgwwrlczm.supabase.co/functions/v1/delete-employee`,{
         method:"POST",
@@ -506,26 +506,73 @@ export default function App(){
           "Content-Type":"application/json",
           "Authorization":`Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlamdzY2l6ZHN3d2d3d3JsY3ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NDI4NzAsImV4cCI6MjA5NjQxODg3MH0.0_KEY6jdyORXYcnYEh7EOf4sX__0QemA0b2qPSO8Onw`,
         },
-        body:JSON.stringify({userId:emp.auth_id, email:emp.email, name:emp.name}),
+        body:JSON.stringify({userId:emp.auth_id}),
       });
     }
-    setEmployees(e=>e.filter(x=>x.id!==emp.id));
-    setSessions(s=>s.filter(x=>x.emp_id!==(emp.auth_id||emp.id)));
-    setShifts(s=>s.filter(x=>x.emp_id!==(emp.auth_id||emp.id)));
-    setTimeOff(t=>t.filter(x=>x.emp_id!==(emp.auth_id||emp.id)));
+    setEmployees(e=>e.map(x=>x.id===emp.id?{...x,role:"Terminated"}:x));
     setDeleteConfirm(null);
-    showToast(`${emp.name} has been removed from the system`);
+    showToast(`${emp.name} has been terminated. All records kept for payroll history.`);
   };
 
   // ── SHIFTS ────────────────────────────────────────────────────────────────────
   const handleAddShift=async(shiftData)=>{
     const {data}=await supabase.from("shifts").insert(shiftData).select().single();
-    if(data){setShifts(s=>[...s,data]);setShiftModal(null);showToast("Shift added");}
+    if(data){
+      setShifts(s=>[...s,data]);
+      setShiftModal(null);
+      showToast("Shift added");
+      // Notify employee by email
+      const emp=employees.find(e=>e.auth_id===shiftData.emp_id||e.id===shiftData.emp_id);
+      if(emp?.email){
+        fetch(`https://eejgscizdswwgwwrlczm.supabase.co/functions/v1/notify-schedule`,{
+          method:"POST",
+          headers:{
+            "Content-Type":"application/json",
+            "Authorization":`Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlamdzY2l6ZHN3d2d3d3JsY3ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NDI4NzAsImV4cCI6MjA5NjQxODg3MH0.0_KEY6jdyORXYcnYEh7EOf4sX__0QemA0b2qPSO8Onw`,
+          },
+          body:JSON.stringify({
+            employeeName:emp.name,
+            email:emp.email,
+            action:"new",
+            shiftDate:shiftData.shift_date,
+            shiftType:shiftData.shift_type,
+            startTime:shiftData.start_time,
+            endTime:shiftData.end_time,
+            note:shiftData.note||"",
+          }),
+        });
+      }
+    }
   };
 
   const handleDeleteShift=async(id)=>{
+    // Find shift before deleting so we can notify employee
+    const sh=shifts.find(s=>s.id===id);
     await supabase.from("shifts").delete().eq("id",id);
-    setShifts(s=>s.filter(x=>x.id!==id));showToast("Shift removed");
+    setShifts(s=>s.filter(x=>x.id!==id));
+    showToast("Shift removed");
+    if(sh){
+      const emp=employees.find(e=>e.auth_id===sh.emp_id||e.id===sh.emp_id);
+      if(emp?.email){
+        fetch(`https://eejgscizdswwgwwrlczm.supabase.co/functions/v1/notify-schedule`,{
+          method:"POST",
+          headers:{
+            "Content-Type":"application/json",
+            "Authorization":`Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlamdzY2l6ZHN3d2d3d3JsY3ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NDI4NzAsImV4cCI6MjA5NjQxODg3MH0.0_KEY6jdyORXYcnYEh7EOf4sX__0QemA0b2qPSO8Onw`,
+          },
+          body:JSON.stringify({
+            employeeName:emp.name,
+            email:emp.email,
+            action:"removed",
+            shiftDate:sh.shift_date,
+            shiftType:sh.shift_type,
+            startTime:sh.start_time,
+            endTime:sh.end_time,
+            note:"",
+          }),
+        });
+      }
+    }
   };
 
   // ── TIME OFF ──────────────────────────────────────────────────────────────────
@@ -759,8 +806,10 @@ export default function App(){
 
         {/* ══ TEAM TAB ══ */}
         {tab==="team"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:24}}>
+          {employees.filter(e=>e.role!=="Terminated").length===0&&<div style={{textAlign:"center",color:"#9E9E9E",padding:32}}>No active employees.</div>}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(268px,1fr))",gap:16}}>
-            {employees.map(emp=>{
+            {employees.filter(e=>e.role!=="Terminated").map(emp=>{
               const isIn=sessions.some(s=>s.emp_id===emp.auth_id&&!s.clock_out);
               const totalSess=sessions.filter(s=>s.emp_id===emp.auth_id&&s.clock_out);
               const totalHrs=totalSess.reduce((a,s)=>a+parseFloat(hoursWorked(new Date(s.clock_in).getTime(),new Date(s.clock_out).getTime())),0).toFixed(1);
@@ -799,6 +848,38 @@ export default function App(){
                 </Card>
               );
             })}
+          </div>
+          {/* Terminated employees section - admin only */}
+          {isAdmin&&employees.filter(e=>e.role==="Terminated").length>0&&(
+            <div>
+              <div style={{fontSize:11,fontWeight:700,color:"#ef5350",letterSpacing:2,textTransform:"uppercase",marginBottom:12,borderTop:"1px solid #2a2a2a",paddingTop:20}}>TERMINATED EMPLOYEES — RECORDS KEPT FOR PAYROLL</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(268px,1fr))",gap:16}}>
+                {employees.filter(e=>e.role==="Terminated").map(emp=>{
+                  const totalSess=sessions.filter(s=>s.emp_id===emp.auth_id&&s.clock_out);
+                  const totalHrs=totalSess.reduce((a,s)=>a+parseFloat(hoursWorked(new Date(s.clock_in).getTime(),new Date(s.clock_out).getTime())),0).toFixed(1);
+                  return(
+                    <div key={emp.id} style={{background:"#1A1A1A",border:"1px solid #ef535033",borderRadius:4,padding:20,opacity:.7}}>
+                      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
+                        <div style={{width:46,height:46,borderRadius:"50%",background:"#2a2a2a",border:"2px solid #ef535044",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Bebas Neue',sans-serif",fontSize:17,color:"#ef5350"}}>{emp.initials||"?"}</div>
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight:700,fontSize:14,color:"#9E9E9E"}}>{emp.name}</div>
+                          <div style={{fontSize:11,color:"#ef5350",marginTop:2,letterSpacing:1,textTransform:"uppercase"}}>Terminated</div>
+                        </div>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                        {[["Total Hrs",`${totalHrs}h`],["Sessions",totalSess.length]].map(([l,v])=>(
+                          <div key={l} style={{background:"#111",borderRadius:2,padding:"8px 10px",border:"1px solid #2a2a2a"}}>
+                            <div style={{fontSize:10,color:"#616161",textTransform:"uppercase",letterSpacing:1}}>{l}</div>
+                            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#9E9E9E",marginTop:2}}>{v}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           </div>
         )}
 
@@ -962,7 +1043,7 @@ export default function App(){
             You are about to permanently remove<br/>
             <strong style={{color:"#fff",fontSize:16}}>{deleteConfirm.name}</strong><br/>
             from the system.<br/><br/>
-            <span style={{color:"#ef5350"}}>This will delete all their shifts, sessions, time off records, and revoke their access. This cannot be undone.</span>
+            <span style={{color:"#ef5350"}}>This will revoke their app access immediately. All shifts, sessions, and time off records are kept for payroll history.</span>
           </div>
           <div style={{display:"flex",gap:12}}>
             <button onClick={()=>setDeleteConfirm(null)} style={{flex:1,padding:"12px",background:"transparent",border:"1px solid #2a2a2a",borderRadius:2,color:"#9E9E9E",cursor:"pointer",fontFamily:"'Barlow',sans-serif",fontWeight:700,fontSize:14}}>Cancel</button>
