@@ -475,36 +475,67 @@ export default function App(){
   const sendInvite=async(emp)=>{
     if(!emp||!emp.email){showToast("No email on file for this employee","error");return;}
     setInviteLoading(true);
-    try{
-      const controller=new AbortController();
-      const timeoutId=setTimeout(()=>controller.abort(),15000);
-      const res=await fetch("https://eejgscizdswwgwwrlczm.supabase.co/functions/v1/invite-employee",{
-        method:"POST",
-        signal:controller.signal,
-        headers:{
-          "Content-Type":"application/json",
-          "Authorization":`Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlamdzY2l6ZHN3d2d3d3JsY3ptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA4NDI4NzAsImV4cCI6MjA5NjQxODg3MH0.0_KEY6jdyORXYcnYEh7EOf4sX__0QemA0b2qPSO8Onw`,
-        },
-        body:JSON.stringify({email:emp.email,name:emp.name}),
-      });
-      clearTimeout(timeoutId);
-      let json={};
-      try{ json=await res.json(); }catch(e){ json={}; }
-      if(res.ok&&json.ok){
-        setInviteSent(s=>({...s,[emp.id]:true}));
-        showToast(`Invite sent to ${emp.email} ✓`);
-      } else {
-        const errMsg=typeof json.error==="string"?json.error:JSON.stringify(json.error)||"Failed to send invite";
-        showToast(errMsg,"error");
-      }
-    }catch(e){
-      if(e.name==="AbortError"){
-        showToast("Request timed out — check Edge Function logs","error");
-      } else {
-        showToast("Failed to send invite: "+e.message,"error");
-      }
-    }
-    setInviteLoading(false);
+    const appUrl="https://puff-puff-timesheet.vercel.app";
+    const emailHtml=`
+      <div style="font-family:sans-serif;max-width:520px;margin:0 auto;background:#1C1C1C;color:#fff;padding:40px;border-radius:8px;">
+        <div style="margin-bottom:24px;">
+          <div style="background:#fff;display:inline-block;padding:4px 16px;margin-bottom:4px;">
+            <span style="font-size:24px;font-weight:900;letter-spacing:4px;color:#000;">PUFF PUFF</span>
+          </div><br/>
+          <div style="background:#D32F2F;display:inline-block;padding:2px 16px;">
+            <span style="font-size:13px;font-weight:700;letter-spacing:5px;color:#fff;">SMOKE &amp; VAPE</span>
+          </div>
+        </div>
+        <h1 style="color:#fff;font-size:22px;margin-bottom:8px;">Welcome, ${emp.name}! 👋</h1>
+        <p style="color:#9E9E9E;font-size:15px;line-height:1.6;">
+          You have been added to the <strong style="color:#fff">Puff Puff Smoke &amp; Vape</strong> employee portal.
+          Click the button below to create your account and get started.
+        </p>
+        <a href="${appUrl}" style="display:inline-block;margin-top:28px;background:#D32F2F;color:#fff;text-decoration:none;padding:14px 32px;border-radius:4px;font-weight:700;font-size:15px;letter-spacing:1px;">
+          Set Up My Account →
+        </a>
+        <div style="margin-top:28px;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:16px;">
+          <p style="color:#9E9E9E;font-size:13px;margin:0 0 8px;">To register:</p>
+          <ol style="color:#9E9E9E;font-size:13px;margin:0;padding-left:18px;line-height:1.8;">
+            <li>Click the button above</li>
+            <li>Click <strong style="color:#fff">Register</strong></li>
+            <li>Fill in your details and create a password</li>
+            <li>Your manager will activate your account shortly</li>
+          </ol>
+        </div>
+        <p style="color:#616161;font-size:12px;margin-top:32px;line-height:1.6;">
+          If you did not expect this email you can safely ignore it.<br/>
+          📍 625 S 8th St, West Dundee, IL 60118
+        </p>
+      </div>
+    `;
+    return new Promise((resolve)=>{
+      const xhr=new XMLHttpRequest();
+      xhr.open("POST","https://api.resend.com/emails",true);
+      xhr.setRequestHeader("Authorization","Bearer re_UuhWLpNG_HbyHXFPfJL9GA4ePRpHMdSTM");
+      xhr.setRequestHeader("Content-Type","application/json");
+      xhr.onload=()=>{
+        setInviteLoading(false);
+        if(xhr.status>=200&&xhr.status<300){
+          setInviteSent(s=>({...s,[emp.id]:true}));
+          showToast(`Invite sent to ${emp.email} ✓`);
+        } else {
+          showToast("Failed to send invite — check Resend API","error");
+        }
+        resolve();
+      };
+      xhr.onerror=()=>{
+        setInviteLoading(false);
+        showToast("Network error sending invite","error");
+        resolve();
+      };
+      xhr.send(JSON.stringify({
+        from:"Puff Puff Smoke & Vape <onboarding@resend.dev>",
+        to:[emp.email],
+        subject:"You are invited to join Puff Puff Smoke & Vape",
+        html:emailHtml,
+      }));
+    });
   };
 
 
