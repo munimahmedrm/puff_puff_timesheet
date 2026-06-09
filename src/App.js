@@ -494,10 +494,17 @@ export default function App(){
   // ── DELETE EMPLOYEE ───────────────────────────────────────────────────────
   const deleteEmployee=async(emp)=>{
     // Mark employee as terminated (keeps all history for payroll records)
-    await supabase.from("employees").update({
-      role:"Terminated",
-      terminated_at: new Date().toISOString(),
-    }).eq("id", emp.id);
+    const { data: updatedEmp, error } = await supabase
+      .from("employees")
+      .update({ role:"Terminated", terminated_at: new Date().toISOString() })
+      .eq("id", emp.id)
+      .select()
+      .single();
+    if(error){
+      showToast("Failed to terminate employee. Try again.","error");
+      setDeleteConfirm(null);
+      return;
+    }
     // Revoke their login access only
     if(emp.auth_id){
       await fetch(`https://eejgscizdswwgwwrlczm.supabase.co/functions/v1/delete-employee`,{
@@ -509,7 +516,8 @@ export default function App(){
         body:JSON.stringify({userId:emp.auth_id}),
       });
     }
-    setEmployees(e=>e.map(x=>x.id===emp.id?{...x,role:"Terminated"}:x));
+    // Update local state with the confirmed DB value
+    setEmployees(e=>e.map(x=>x.id===emp.id?(updatedEmp||{...x,role:"Terminated"}):x));
     setDeleteConfirm(null);
     showToast(`${emp.name} has been terminated. All records kept for payroll history.`);
   };
