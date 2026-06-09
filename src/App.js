@@ -446,6 +446,13 @@ export default function App(){
   // ── ADMIN: Add/Edit Employee ──────────────────────────────────────────────────
   const addEmployee=async()=>{
     if(!newEmp.name||!newEmp.wage) return;
+    // Check for duplicate name or email
+    const dupName=employees.find(e=>e.name.toLowerCase()===newEmp.name.trim().toLowerCase()&&e.role!=="Terminated");
+    if(dupName){showToast(`${newEmp.name} already exists as an active employee`,"error");return;}
+    if(newEmp.email){
+      const dupEmail=employees.find(e=>e.email&&e.email.toLowerCase()===newEmp.email.trim().toLowerCase()&&e.role!=="Terminated");
+      if(dupEmail){showToast("An active employee with that email already exists","error");return;}
+    }
     const parts=newEmp.name.trim().split(" ");
     const initials=(parts[0][0]+(parts[1]?parts[1][0]:"")).toUpperCase();
     const {data}=await supabase.from("employees").insert({name:newEmp.name.trim(),role:newEmp.role,wage:parseFloat(newEmp.wage),email:newEmp.email,initials,auth_id:null}).select().single();
@@ -722,7 +729,7 @@ export default function App(){
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
                     <div>
                       <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:2}}>{myRecord?.name??"Employee"}</div>
-                      <div style={{fontSize:13,color:C.midGray,marginTop:2}}>{myRecord?.role} · ${myRecord?.wage}/hr</div>
+                      <div style={{fontSize:13,color:C.midGray,marginTop:2}}>{myRecord?.role}{myRecord?.wage&&myRecord.wage>0?` · $${myRecord.wage}/hr`:""}</div>
                     </div>
                     {activeSess?<Badge color="green">● CLOCKED IN</Badge>:<Badge color="gray">● OFF SHIFT</Badge>}
                   </div>
@@ -835,14 +842,14 @@ export default function App(){
                   </div>
                   <Divider/>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                    {[["Hourly Rate",emp.wage?`$${emp.wage}`:"TBD"],["This Week",`$${weeklyEarnings(emp.auth_id)}`],["Total Hrs",`${totalHrs}h`],["Sessions",totalSess.length]].map(([l,v])=>(
+                    {[["Hourly Rate", emp.wage&&emp.wage>0?`$${emp.wage}/hr`:"TBD"],["This Week",`$${weeklyEarnings(emp.auth_id)}`],["Total Hrs",`${totalHrs}h`],["Sessions",totalSess.length]].map(([l,v])=>(
                       <div key={l} style={{background:C.darkGray,borderRadius:2,padding:"10px 12px",border:`1px solid ${C.border}`}}>
                         <div style={{fontSize:10,color:C.midGray,textTransform:"uppercase",letterSpacing:1}}>{l}</div>
                         <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:C.white,marginTop:3,letterSpacing:1}}>{v}</div>
                       </div>
                     ))}
                   </div>
-                  {isAdmin&&(
+                  {isAdmin&&emp.auth_id!==authUser?.id&&(
                     <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:8}}>
                       <Btn full size="sm" variant="ghost" onClick={()=>setEditEmp({...emp})}>✏ Edit Role / Wage</Btn>
                       {emp.email&&(
@@ -980,11 +987,11 @@ export default function App(){
           <div style={{display:"flex",flexDirection:"column",gap:20}}>
 
             {/* Pending employees alert */}
-            {employees.filter(e=>e.role==="Pending").length>0&&(
+            {employees.filter(e=>e.role==="Pending"&&e.auth_id!==authUser?.id).length>0&&(
               <div style={{padding:"14px 18px",background:C.warningDim,border:`1px solid ${C.warning}44`,borderRadius:4,display:"flex",alignItems:"center",gap:12}}>
                 <span style={{fontSize:20}}>⚠</span>
                 <div style={{flex:1}}>
-                  <div style={{fontWeight:700,color:C.warning}}>{employees.filter(e=>e.role==="Pending").length} employee(s) awaiting role assignment</div>
+                  <div style={{fontWeight:700,color:C.warning}}>{employees.filter(e=>e.role==="Pending"&&e.auth_id!==authUser?.id).length} employee(s) awaiting role assignment</div>
                   <div style={{fontSize:12,color:C.midGray,marginTop:2}}>Go to the <strong>Team tab</strong> and click "Edit Role / Wage" to assign them. Use "Send Invite Email" to send them a signup link.</div>
                 </div>
               </div>
