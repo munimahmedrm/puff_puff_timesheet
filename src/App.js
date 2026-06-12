@@ -59,12 +59,16 @@ const STYLES = `
   .row-hover:hover{background:${C.redDim}!important;}
   .sidebar-btn:hover{background:${C.redDim}!important;color:${C.white}!important;}
 
+  .app-sidebar{
+    width:220px;flex-shrink:0;background:${C.black};border-right:2px solid ${C.red};
+    display:flex;flex-direction:column;position:fixed;top:0;left:0;height:100vh;z-index:200;
+    transition:transform .25s ease;
+  }
+
   @media (max-width: 860px){
     .main-area{margin-left:0!important;}
-    div[style*="position: fixed"][style*="left: 0px"][style*="width: 220px"]{
-      transform:translateX(-100%);
-    }
-    .sidebar-open{transform:translateX(0)!important;}
+    .app-sidebar{transform:translateX(-100%);}
+    .app-sidebar.sidebar-open{transform:translateX(0)!important;}
     .mobile-topbar{display:flex!important;}
     .sidebar-overlay{display:block!important;}
   }
@@ -301,7 +305,8 @@ export default function App(){
   const [authForm,setAuthForm]=useState({firstName:"",lastName:"",dob:"",phone:"",email:"",password:""});
   const [authErr,setAuthErr]=useState("");
 
-  const [tab,setTab]=useState("clock");
+  const [tab,setTab]=useState("dashboard");
+  const [sidebarOpen,setSidebarOpen]=useState(false);
   const [employees,setEmployees]=useState([]);
   const [roles,setRoles]=useState(["Manager","Sales Associate","Inventory","Cashier","Security","Cleaning"]);
   const [sessions,setSessions]=useState([]);
@@ -728,8 +733,6 @@ export default function App(){
     ...(isAdmin?[{id:"admin",label:"Admin",icon:"⚙"}]:[]),
   ];
 
-  const [sidebarOpen,setSidebarOpen]=useState(false);
-
   // Today's stats for dashboard
   const todayStr=new Date().toISOString().split("T")[0];
   const todaySessions=sessions.filter(s=>s.clock_in&&s.clock_in.startsWith(todayStr));
@@ -753,11 +756,7 @@ export default function App(){
     <div style={{minHeight:"100vh",background:C.smoke,display:"flex"}}>
 
       {/* SIDEBAR */}
-      <div className={sidebarOpen?"sidebar-open":""} style={{
-        width:220,flexShrink:0,background:C.black,borderRight:`2px solid ${C.red}`,
-        display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,height:"100vh",zIndex:200,
-        transition:"transform .25s ease",
-      }}>
+      <div className={"app-sidebar"+(sidebarOpen?" sidebar-open":"")}>
         <div style={{padding:"20px 16px",borderBottom:`1px solid ${C.border}`}}>
           <Logo size="sm"/>
         </div>
