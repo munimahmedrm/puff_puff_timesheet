@@ -243,6 +243,87 @@ function ScheduleCalendar({shifts,employees,isAdmin,onAddShift,onDeleteShift,myE
   );
 }
 
+// ─── TEAM AVAILABILITY GRID ───────────────────────────────────────────────────
+const AVAIL_DAYS=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+
+function AvailabilityGrid({employees,availability,isAdmin,authUserId,onSave}){
+  const visibleEmployees=employees.filter(e=>e.role!=="Terminated"&&(isAdmin||e.auth_id===authUserId));
+
+  const getAvail=(empId,day)=>availability.find(a=>a.emp_id===empId&&a.day===day);
+
+  return (
+    <div style={{overflowX:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,minWidth:760}}>
+        <thead>
+          <tr>
+            <th style={{textAlign:"left",padding:"10px 12px",borderBottom:`2px solid ${C.border}`,minWidth:160,position:"sticky",left:0,background:C.charcoal,zIndex:2}}>
+              <span style={{fontSize:11,color:C.midGray,letterSpacing:1,textTransform:"uppercase"}}>Team Member</span>
+            </th>
+            {AVAIL_DAYS.map(d=>(
+              <th key={d} style={{textAlign:"center",padding:"10px 8px",borderBottom:`2px solid ${C.border}`,minWidth:104}}>
+                <div style={{fontSize:12,color:C.white,fontWeight:700,letterSpacing:.5}}>{d}</div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {visibleEmployees.length===0&&(
+            <tr><td colSpan={8} style={{textAlign:"center",padding:32,color:C.midGray}}>No employees to display.</td></tr>
+          )}
+          {visibleEmployees.map(emp=>{
+            const eid=emp.auth_id||emp.id;
+            const isMe=eid===authUserId;
+            return (
+              <tr key={emp.id} className="row-hover" style={{borderBottom:`1px solid ${C.border}22`}}>
+                <td style={{padding:"10px 12px",position:"sticky",left:0,background:C.charcoal,zIndex:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <Avatar initials={emp.initials||"?"} size={32}/>
+                    <div style={{fontWeight:700,fontSize:13}}>{emp.name}</div>
+                  </div>
+                </td>
+                {AVAIL_DAYS.map(day=>{
+                  const av=getAvail(eid,day);
+                  const isAvailable=av?av.available:false;
+                  return (
+                    <td key={day} style={{padding:6,textAlign:"center",verticalAlign:"middle"}}>
+                      {isMe?(
+                        <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"center"}}>
+                          <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                            <input type="checkbox" checked={isAvailable} onChange={e=>onSave(day,"available",e.target.checked)} style={{accentColor:C.red,width:15,height:15,cursor:"pointer"}}/>
+                            <span style={{fontSize:11,color:isAvailable?C.success:C.midGray}}>{isAvailable?"Available":"Unavailable"}</span>
+                          </label>
+                          {isAvailable&&(
+                            <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                              <input type="time" value={av?.start_time||"09:00"} onChange={e=>onSave(day,"start_time",e.target.value)}
+                                style={{background:C.darkGray,border:`1px solid ${C.borderLight}`,borderRadius:2,color:C.white,fontSize:10,padding:"2px 4px",width:68}}/>
+                              <span style={{color:C.midGray,fontSize:10}}>–</span>
+                              <input type="time" value={av?.end_time||"17:00"} onChange={e=>onSave(day,"end_time",e.target.value)}
+                                style={{background:C.darkGray,border:`1px solid ${C.borderLight}`,borderRadius:2,color:C.white,fontSize:10,padding:"2px 4px",width:68}}/>
+                            </div>
+                          )}
+                        </div>
+                      ):(
+                        isAvailable?(
+                          <div style={{background:C.successDim,border:`1px solid ${C.success}44`,borderRadius:4,padding:"6px 8px",fontSize:11,color:C.success}}>
+                            <div style={{fontWeight:700}}>Available</div>
+                            <div>{av.start_time} – {av.end_time}</div>
+                          </div>
+                        ):(
+                          <div style={{color:C.midGray,fontSize:11}}>—</div>
+                        )
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ─── WEEKLY SCHEDULE GRID (Homebase style) ───────────────────────────────────
 function WeekGrid({shifts,employees,sessions,isAdmin,authUserId,onAddShift,onDeleteShift}){
   const [weekStart,setWeekStart]=useState(()=>{
@@ -511,6 +592,8 @@ export default function App(){
   // Schedule modal
   const [shiftModal,setShiftModal]=useState(null); // {date, empId}
   const [scheduleView,setScheduleView]=useState("week");
+  const [scheduleSubTab,setScheduleSubTab]=useState("schedule"); // "schedule" | "availability"
+  const [availability,setAvailability]=useState([]); // [{id, emp_id, day, available, start_time, end_time}]
 
   // Edit employee modal
   const [editEmp,setEditEmp]=useState(null);
@@ -543,16 +626,18 @@ export default function App(){
   // ── FETCH ALL ────────────────────────────────────────────────────────────────
   const fetchAll=useCallback(async()=>{
     if(!authUser) return;
-    const [e,s,t,sh]=await Promise.all([
+    const [e,s,t,sh,av]=await Promise.all([
       supabase.from("employees").select("*").order("name"),
       supabase.from("sessions").select("*").order("clock_in",{ascending:false}),
       supabase.from("time_off").select("*").order("submitted_at",{ascending:false}),
       supabase.from("shifts").select("*").order("shift_date"),
+      supabase.from("availability").select("*"),
     ]);
     if(e.data) setEmployees(e.data);
     if(s.data) setSessions(s.data);
     if(t.data) setTimeOff(t.data);
     if(sh.data) setShifts(sh.data);
+    if(av.data) setAvailability(av.data);
   },[authUser]);
 
   useEffect(()=>{if(authUser) fetchAll();},[authUser,fetchAll]);
@@ -766,6 +851,21 @@ export default function App(){
     setEmployees(e=>e.map(x=>x.id===emp.id?(updatedEmp||{...x,role:"Terminated"}):x));
     setDeleteConfirm(null);
     showToast(`${emp.name} has been terminated. All records kept for payroll history.`);
+  };
+
+  // ── AVAILABILITY ──────────────────────────────────────────────────────────
+  const saveAvailability=async(day,field,value)=>{
+    const empId=authUser.id;
+    const existing=availability.find(a=>a.emp_id===empId&&a.day===day);
+    if(existing){
+      const updates={[field]:value};
+      const {data}=await supabase.from("availability").update(updates).eq("id",existing.id).select().single();
+      if(data) setAvailability(a=>a.map(x=>x.id===existing.id?data:x));
+    }else{
+      const defaults={emp_id:empId,day,available:true,start_time:"09:00",end_time:"17:00",[field]:value};
+      const {data}=await supabase.from("availability").insert(defaults).select().single();
+      if(data) setAvailability(a=>[...a,data]);
+    }
   };
 
   // ── SHIFTS ────────────────────────────────────────────────────────────────────
@@ -1142,6 +1242,21 @@ export default function App(){
         {/* ══ SCHEDULE TAB ══ */}
         {tab==="schedule"&&(
           <div style={{display:"flex",flexDirection:"column",gap:20}}>
+
+            {/* Sub-tabs */}
+            <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.border}`}}>
+              {[{id:"schedule",label:"Schedule"},{id:"availability",label:"Team Availability"}].map(st=>(
+                <button key={st.id} onClick={()=>setScheduleSubTab(st.id)} style={{
+                  background:"none",border:"none",padding:"10px 18px",cursor:"pointer",
+                  fontFamily:"'Barlow',sans-serif",fontWeight:700,fontSize:13,letterSpacing:.5,
+                  color:scheduleSubTab===st.id?C.white:C.midGray,
+                  borderBottom:`2px solid ${scheduleSubTab===st.id?C.red:"transparent"}`,
+                  marginBottom:-1,transition:"all .2s",
+                }}>{st.label}</button>
+              ))}
+            </div>
+
+            {scheduleSubTab==="schedule"&&(<>
             {isAdmin&&(
               <div style={{padding:"10px 16px",background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:4,fontSize:13,color:C.lightGray,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
                 <span>📅 <strong>Admin:</strong> Click any cell to add a shift for an employee.</span>
@@ -1173,6 +1288,24 @@ export default function App(){
                 />
               )}
             </Card>
+            </>)}
+
+            {scheduleSubTab==="availability"&&(<>
+              {!isAdmin&&(
+                <div style={{padding:"10px 16px",background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:4,fontSize:13,color:C.lightGray}}>
+                  ✓ Check the days you're available to work and set your preferred hours. Your manager will see this when building the schedule.
+                </div>
+              )}
+              <Card>
+                <AvailabilityGrid
+                  employees={employees}
+                  availability={availability}
+                  isAdmin={isAdmin}
+                  authUserId={authUser?.id}
+                  onSave={saveAvailability}
+                />
+              </Card>
+            </>)}
 
             {/* Upcoming shifts list for employee */}
             {!isAdmin&&(
