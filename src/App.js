@@ -57,6 +57,17 @@ const STYLES = `
   .card-hover:hover{border-color:${C.red}44!important}
   .shift-cell:hover{background:${C.redDim}!important;cursor:pointer;}
   .row-hover:hover{background:${C.redDim}!important;}
+  .sidebar-btn:hover{background:${C.redDim}!important;color:${C.white}!important;}
+
+  @media (max-width: 860px){
+    .main-area{margin-left:0!important;}
+    div[style*="position: fixed"][style*="left: 0px"][style*="width: 220px"]{
+      transform:translateX(-100%);
+    }
+    .sidebar-open{transform:translateX(0)!important;}
+    .mobile-topbar{display:flex!important;}
+    .sidebar-overlay{display:block!important;}
+  }
 `;
 
 // ─── PRIMITIVES ───────────────────────────────────────────────────────────────
@@ -708,49 +719,187 @@ export default function App(){
 
   // ── MAIN APP ──────────────────────────────────────────────────────────────────
   const TABS=[
-    {id:"clock",label:"TIME CLOCK"},
-    {id:"schedule",label:"SCHEDULE"},
-    {id:"team",label:"TEAM"},
-    {id:"logs",label:"LOGS"},
-    {id:"timeoff",label:"TIME OFF"},
-    ...(isAdmin?[{id:"admin",label:"ADMIN"}]:[]),
+    {id:"dashboard",label:"Dashboard",icon:"⬚"},
+    {id:"clock",label:"Time Clock",icon:"⏱"},
+    {id:"schedule",label:"Schedule",icon:"📅"},
+    {id:"team",label:"Team",icon:"👥"},
+    {id:"logs",label:"Timesheets",icon:"🕐"},
+    {id:"timeoff",label:"Time Off",icon:"🗓"},
+    ...(isAdmin?[{id:"admin",label:"Admin",icon:"⚙"}]:[]),
   ];
+
+  const [sidebarOpen,setSidebarOpen]=useState(false);
+
+  // Today's stats for dashboard
+  const todayStr=new Date().toISOString().split("T")[0];
+  const todaySessions=sessions.filter(s=>s.clock_in&&s.clock_in.startsWith(todayStr));
+  const activeNow=employees.filter(e=>sessions.some(s=>s.emp_id===(e.auth_id||e.id)&&!s.clock_out)&&e.role!=="Terminated");
+  const todayPaidHours=todaySessions.filter(s=>s.clock_out).reduce((a,s)=>a+parseFloat(hoursWorked(new Date(s.clock_in).getTime(),new Date(s.clock_out).getTime())),0);
+  const todayWages=todaySessions.filter(s=>s.clock_out).reduce((a,s)=>{
+    const emp=employees.find(e=>e.auth_id===s.emp_id);
+    return a+(emp?parseFloat(hoursWorked(new Date(s.clock_in).getTime(),new Date(s.clock_out).getTime()))*emp.wage:0);
+  },0);
+  const pendingTOCount=timeOff.filter(r=>r.status==="pending").length;
+  const pendingEmpCount=employees.filter(e=>e.role==="Pending"&&e.auth_id!==authUser?.id).length;
+  const today=new Date(); today.setHours(0,0,0,0);
+  const upcomingShifts=shifts.filter(s=>{
+    const d=new Date(s.shift_date+"T00:00:00");
+    const limit=new Date(today); limit.setDate(limit.getDate()+7);
+    return d>=today&&d<=limit&&(isAdmin||s.emp_id===authUser?.id);
+  }).sort((a,b)=>a.shift_date.localeCompare(b.shift_date));
 
   return (
     <><style>{STYLES}</style>
-    <div style={{minHeight:"100vh",background:C.smoke}}>
+    <div style={{minHeight:"100vh",background:C.smoke,display:"flex"}}>
 
-      {/* TOP BAR */}
-      <div style={{background:C.black,borderBottom:`2px solid ${C.red}`,padding:"0 24px",position:"sticky",top:0,zIndex:100}}>
-        <div style={{maxWidth:980,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",height:60}}>
+      {/* SIDEBAR */}
+      <div className={sidebarOpen?"sidebar-open":""} style={{
+        width:220,flexShrink:0,background:C.black,borderRight:`2px solid ${C.red}`,
+        display:"flex",flexDirection:"column",position:"fixed",top:0,left:0,height:"100vh",zIndex:200,
+        transition:"transform .25s ease",
+      }}>
+        <div style={{padding:"20px 16px",borderBottom:`1px solid ${C.border}`}}>
           <Logo size="sm"/>
-          <div style={{display:"flex",alignItems:"center",gap:14}}>
-            {myRecord&&(
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <Avatar initials={myRecord.initials||"?"} size={32} active={!!activeSess}/>
-                <div>
-                  <div style={{fontSize:13,fontWeight:600,lineHeight:1.2}}>{myRecord.name}</div>
-                  <div style={{fontSize:11,color:myRecord.role==="Pending"?C.warning:C.midGray}}>{myRecord.role==="Pending"?"Awaiting role assignment":myRecord.role}</div>
-                </div>
-                {activeSess&&<Badge color="green">● ON SHIFT</Badge>}
-              </div>
-            )}
-            <Btn variant="ghost" size="sm" onClick={handleLogout}>Sign Out</Btn>
-          </div>
         </div>
-      </div>
 
-      {/* NAV */}
-      <div style={{background:C.charcoal,borderBottom:`1px solid ${C.border}`,padding:"0 24px"}}>
-        <div style={{maxWidth:980,margin:"0 auto",display:"flex",overflowX:"auto"}}>
+        <div style={{flex:1,padding:"12px 8px",overflowY:"auto"}}>
           {TABS.map(t=>(
-            <button key={t.id} className="tab-btn" onClick={()=>setTab(t.id)} style={{background:"none",border:"none",padding:"14px 18px",cursor:"pointer",fontFamily:"'Barlow',sans-serif",fontWeight:700,fontSize:12,letterSpacing:1.5,whiteSpace:"nowrap",color:tab===t.id?C.white:C.midGray,borderBottom:`2px solid ${tab===t.id?C.red:"transparent"}`,marginBottom:-1,transition:"all .2s"}}>{t.label}</button>
+            <button key={t.id} className="sidebar-btn" onClick={()=>{setTab(t.id);setSidebarOpen(false);}} style={{
+              width:"100%",display:"flex",alignItems:"center",gap:12,
+              background: tab===t.id?C.redDim:"none",
+              border:"none",borderLeft:`3px solid ${tab===t.id?C.red:"transparent"}`,
+              padding:"12px 14px",cursor:"pointer",borderRadius:2,marginBottom:2,
+              fontFamily:"'Barlow',sans-serif",fontWeight:600,fontSize:13.5,
+              color: tab===t.id?C.white:C.midGray,
+              transition:"all .15s",textAlign:"left",
+            }}>
+              <span style={{fontSize:16,width:20,textAlign:"center"}}>{t.icon}</span>
+              {t.label}
+              {t.id==="timeoff"&&pendingTOCount>0&&isAdmin&&<span style={{marginLeft:"auto",background:C.red,color:"#fff",fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:10}}>{pendingTOCount}</span>}
+              {t.id==="admin"&&pendingEmpCount>0&&<span style={{marginLeft:"auto",background:C.warning,color:"#000",fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:10}}>{pendingEmpCount}</span>}
+            </button>
           ))}
         </div>
+
+        {/* User card at bottom */}
+        <div style={{padding:14,borderTop:`1px solid ${C.border}`}}>
+          {myRecord&&(
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+              <Avatar initials={myRecord.initials||"?"} size={36} active={!!activeSess}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,lineHeight:1.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{myRecord.name}</div>
+                <div style={{fontSize:11,color:myRecord.role==="Pending"?C.warning:C.midGray}}>{myRecord.role==="Pending"?"Pending":myRecord.role}</div>
+              </div>
+              {activeSess&&<Badge color="green">●</Badge>}
+            </div>
+          )}
+          <Btn variant="ghost" size="sm" full onClick={handleLogout}>Sign Out</Btn>
+        </div>
       </div>
 
-      {/* CONTENT */}
-      <div style={{maxWidth:980,margin:"0 auto",padding:28,animation:"fadeUp .3s ease"}}>
+      {/* Mobile overlay */}
+      {sidebarOpen&&<div onClick={()=>setSidebarOpen(false)} style={{position:"fixed",inset:0,background:"#000000aa",zIndex:150,display:"none"}} className="sidebar-overlay"/>}
+
+      {/* MAIN AREA */}
+      <div style={{flex:1,marginLeft:220,minWidth:0}} className="main-area">
+
+        {/* MOBILE TOP BAR */}
+        <div className="mobile-topbar" style={{display:"none",background:C.black,borderBottom:`2px solid ${C.red}`,padding:"0 16px",alignItems:"center",justifyContent:"space-between",height:56,position:"sticky",top:0,zIndex:100}}>
+          <button onClick={()=>setSidebarOpen(true)} style={{background:"none",border:"none",color:C.white,fontSize:22,cursor:"pointer",padding:4}}>☰</button>
+          <Logo size="sm"/>
+          <div style={{width:30}}/>
+        </div>
+
+        {/* CONTENT */}
+        <div style={{maxWidth:1100,margin:"0 auto",padding:28,animation:"fadeUp .3s ease"}}>
+
+          {/* Page title */}
+          <div style={{marginBottom:24}}>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:28,letterSpacing:3,color:C.white}}>{TABS.find(t=>t.id===tab)?.label?.toUpperCase()}</div>
+            <div style={{height:2,width:48,background:C.red,marginTop:6}}/>
+          </div>
+
+          {/* ══ DASHBOARD TAB ══ */}
+          {tab==="dashboard"&&(
+            <div style={{display:"flex",flexDirection:"column",gap:20}}>
+              {/* Stat cards row */}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:16}}>
+                {[
+                  {label:"Active Now",value:activeNow.length,sub:`of ${employees.filter(e=>e.role!=="Terminated").length} employees`,color:C.success},
+                  {label:"Today's Hours",value:`${todayPaidHours.toFixed(1)}h`,sub:"paid hours logged",color:C.red},
+                  {label:"Today's Wages",value:`$${todayWages.toFixed(2)}`,sub:"earned so far",color:C.red},
+                  {label:"Pending Requests",value:pendingTOCount,sub:"time off awaiting review",color:C.warning},
+                ].map(stat=>(
+                  <Card key={stat.label} style={{padding:20}}>
+                    <div style={{fontSize:11,color:C.midGray,textTransform:"uppercase",letterSpacing:1.5,marginBottom:8}}>{stat.label}</div>
+                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:36,color:stat.color,letterSpacing:1,lineHeight:1}}>{stat.value}</div>
+                    <div style={{fontSize:12,color:C.midGray,marginTop:6}}>{stat.sub}</div>
+                  </Card>
+                ))}
+              </div>
+
+              <div style={{display:"grid",gridTemplateColumns:isAdmin?"1.3fr 1fr":"1fr",gap:20}}>
+                {/* Who's clocked in */}
+                <Card>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,marginBottom:16}}>WHO'S WORKING NOW</div>
+                  {activeNow.length===0?(
+                    <div style={{textAlign:"center",color:C.midGray,padding:24}}>No one is currently clocked in.</div>
+                  ):(
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      {activeNow.map(emp=>{
+                        const sess=sessions.find(s=>s.emp_id===(emp.auth_id||emp.id)&&!s.clock_out);
+                        return (
+                          <div key={emp.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:C.darkGray,borderRadius:4,border:`1px solid ${C.border}`}}>
+                            <Avatar initials={emp.initials||"?"} size={36} active/>
+                            <div style={{flex:1}}>
+                              <div style={{fontWeight:700,fontSize:14}}>{emp.name}</div>
+                              <div style={{fontSize:12,color:C.midGray}}>{emp.role} · since {fmt12(sess.clock_in)}</div>
+                            </div>
+                            <Badge color="green">ON SHIFT</Badge>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+
+                {/* Upcoming shifts */}
+                <Card>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,marginBottom:16}}>UPCOMING SHIFTS</div>
+                  {upcomingShifts.length===0?(
+                    <div style={{textAlign:"center",color:C.midGray,padding:24}}>Nothing scheduled this week.</div>
+                  ):(
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      {upcomingShifts.slice(0,6).map(s=>{
+                        const emp=employees.find(e=>e.auth_id===s.emp_id||e.id===s.emp_id);
+                        const sc=SHIFT_COLORS[s.shift_type]||SHIFT_COLORS.Custom;
+                        return (
+                          <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:C.darkGray,borderRadius:4,border:`1px solid ${sc.border}33`}}>
+                            <div style={{width:4,alignSelf:"stretch",background:sc.border,borderRadius:2}}/>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:13,fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{isAdmin?emp?.name:s.shift_type}</div>
+                              <div style={{fontSize:11,color:C.midGray}}>{fmtDate(s.shift_date+"T12:00:00")} · {s.start_time}-{s.end_time}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+              </div>
+
+              {/* Quick actions */}
+              <Card>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2,marginBottom:16}}>QUICK ACTIONS</div>
+                <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                  <Btn onClick={()=>setTab("clock")}>{activeSess?"■ Clock Out":"▶ Clock In / Out"}</Btn>
+                  <Btn variant="ghost" onClick={()=>setTab("schedule")}>📅 View Schedule</Btn>
+                  <Btn variant="ghost" onClick={()=>setTab("timeoff")}>🗓 Request Time Off</Btn>
+                  {isAdmin&&<Btn variant="ghost" onClick={()=>setTab("admin")}>⚙ Admin Panel</Btn>}
+                </div>
+              </Card>
+            </div>
+          )}
 
         {/* ══ CLOCK TAB ══ */}
         {tab==="clock"&&(
@@ -1085,6 +1234,7 @@ export default function App(){
           </div>
         )}
 
+        </div>
       </div>
     </div>
 
