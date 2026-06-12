@@ -243,9 +243,190 @@ function ScheduleCalendar({shifts,employees,isAdmin,onAddShift,onDeleteShift,myE
   );
 }
 
+// ─── WEEKLY SCHEDULE GRID (Homebase style) ───────────────────────────────────
+function WeekGrid({shifts,employees,sessions,isAdmin,authUserId,onAddShift,onDeleteShift}){
+  const [weekStart,setWeekStart]=useState(()=>{
+    const d=new Date(); d.setHours(0,0,0,0);
+    const day=d.getDay();
+    d.setDate(d.getDate()-day); // back to Sunday
+    return d;
+  });
+
+  const days=[];
+  for(let i=0;i<7;i++){
+    const d=new Date(weekStart); d.setDate(weekStart.getDate()+i);
+    days.push(d);
+  }
+  const fmtKey=(d)=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  const fmtRange=()=>{
+    const end=new Date(weekStart); end.setDate(weekStart.getDate()+6);
+    const opts={month:"short",day:"numeric"};
+    const yr = weekStart.getFullYear()!==end.getFullYear()?{year:"numeric"}:{};
+    return `${weekStart.toLocaleDateString("en-US",{...opts})} – ${end.toLocaleDateString("en-US",{...opts,year:"numeric"})}`;
+  };
+  const isToday=(d)=>{
+    const t=new Date(); t.setHours(0,0,0,0);
+    return d.getTime()===t.getTime();
+  };
+
+  const visibleEmployees=employees.filter(e=>e.role!=="Terminated"&&(isAdmin||e.auth_id===authUserId));
+
+  // shift lookup
+  const shiftsFor=(empId,dateKey)=>shifts.filter(s=>(s.emp_id===empId)&&s.shift_date===dateKey);
+
+  // wage/hours per employee for the week
+  const empWeekTotals=(emp)=>{
+    const eid=emp.auth_id||emp.id;
+    let hrs=0;
+    days.forEach(d=>{
+      const dk=fmtKey(d);
+      shiftsFor(eid,dk).forEach(s=>{
+        const [sh,sm]=s.start_time.split(":").map(Number);
+        let [eh,em]=s.end_time.split(":").map(Number);
+        let mins=(eh*60+em)-(sh*60+sm);
+        if(mins<=0) mins+=24*60; // overnight shift
+        hrs+=mins/60;
+      });
+    });
+    return {hrs, wage: hrs*(emp.wage||0)};
+  };
+
+  // day column totals
+  const dayTotals=(dateKey)=>{
+    let hrs=0, wage=0, count=0;
+    visibleEmployees.forEach(emp=>{
+      const eid=emp.auth_id||emp.id;
+      const sh=shiftsFor(eid,dateKey);
+      if(sh.length>0) count++;
+      sh.forEach(s=>{
+        const [sh1,sm]=s.start_time.split(":").map(Number);
+        let [eh,em]=s.end_time.split(":").map(Number);
+        let mins=(eh*60+em)-(sh1*60+sm);
+        if(mins<=0) mins+=24*60;
+        hrs+=mins/60;
+        wage+=(mins/60)*(emp.wage||0);
+      });
+    });
+    return {hrs,wage,count};
+  };
+
+  const weekTotals=()=>{
+    let hrs=0,wage=0;
+    visibleEmployees.forEach(emp=>{
+      const t=empWeekTotals(emp);
+      hrs+=t.hrs; wage+=t.wage;
+    });
+    return {hrs,wage};
+  };
+  const wt=weekTotals();
+
+  const DAY_LABELS=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+  return (
+    <div>
+      {/* Week navigation */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <Btn variant="ghost" size="sm" onClick={()=>{const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()-d.getDay()); setWeekStart(d);}}>Today</Btn>
+          <Btn variant="ghost" size="sm" onClick={()=>setWeekStart(w=>{const d=new Date(w); d.setDate(d.getDate()-7); return d;})}>←</Btn>
+          <Btn variant="ghost" size="sm" onClick={()=>setWeekStart(w=>{const d=new Date(w); d.setDate(d.getDate()+7); return d;})}>→</Btn>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:2}}>{fmtRange()}</div>
+        </div>
+        {isAdmin&&<div style={{fontSize:12,color:C.midGray}}>Click any cell to add a shift</div>}
+      </div>
+
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,minWidth:760}}>
+          <thead>
+            <tr>
+              <th style={{textAlign:"left",padding:"10px 12px",borderBottom:`2px solid ${C.border}`,minWidth:160,position:"sticky",left:0,background:C.charcoal,zIndex:2}}>
+                <span style={{fontSize:11,color:C.midGray,letterSpacing:1,textTransform:"uppercase"}}>Team Members ({visibleEmployees.length})</span>
+              </th>
+              {days.map((d,i)=>(
+                <th key={i} style={{textAlign:"center",padding:"10px 8px",borderBottom:`2px solid ${C.border}`,minWidth:96,background:isToday(d)?C.redDim:"transparent"}}>
+                  <div style={{fontSize:11,color:C.midGray,letterSpacing:1,textTransform:"uppercase"}}>{DAY_LABELS[d.getDay()]}</div>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:isToday(d)?C.red:C.white,letterSpacing:1}}>{d.getDate()}</div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visibleEmployees.length===0&&(
+              <tr><td colSpan={8} style={{textAlign:"center",padding:32,color:C.midGray}}>No employees to display.</td></tr>
+            )}
+            {visibleEmployees.map(emp=>{
+              const eid=emp.auth_id||emp.id;
+              const totals=empWeekTotals(emp);
+              const isOnline=sessions?.some(s=>s.emp_id===eid&&!s.clock_out);
+              return (
+                <tr key={emp.id} className="row-hover" style={{borderBottom:`1px solid ${C.border}22`}}>
+                  <td style={{padding:"10px 12px",position:"sticky",left:0,background:C.charcoal,zIndex:1}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <Avatar initials={emp.initials||"?"} size={32} active={isOnline}/>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:13}}>{emp.name}</div>
+                        <div style={{fontSize:11,color:C.midGray}}>{totals.hrs.toFixed(2)} hrs / ${totals.wage.toFixed(2)}</div>
+                      </div>
+                    </div>
+                  </td>
+                  {days.map((d,i)=>{
+                    const dk=fmtKey(d);
+                    const cellShifts=shiftsFor(eid,dk);
+                    const past=d<new Date(new Date().setHours(0,0,0,0));
+                    return (
+                      <td key={i} className={isAdmin&&!past?"shift-cell":""} onClick={()=>isAdmin&&!past&&onAddShift(d.getFullYear(),d.getMonth(),d.getDate(),eid)}
+                        style={{padding:6,verticalAlign:"top",background:isToday(d)?`${C.redDeep}1A`:"transparent",minWidth:96,opacity:past?.6:1}}>
+                        {cellShifts.map(sh=>{
+                          const sc=SHIFT_COLORS[sh.shift_type]||SHIFT_COLORS.Custom;
+                          return (
+                            <div key={sh.id} style={{position:"relative",background:sc.bg,border:`1px solid ${sc.border}`,borderRadius:4,padding:"4px 6px",marginBottom:4,fontSize:11,color:sc.text,lineHeight:1.4}}>
+                              <div style={{fontWeight:700}}>{sh.start_time}–{sh.end_time}</div>
+                              <div>{sh.shift_type}</div>
+                              {isAdmin&&(
+                                <button onClick={e=>{e.stopPropagation();onDeleteShift(sh.id);}} style={{position:"absolute",top:2,right:2,background:"none",border:"none",color:C.midGray,cursor:"pointer",fontSize:12,lineHeight:1,padding:0}}>×</button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+          {isAdmin&&(
+            <tfoot>
+              <tr style={{borderTop:`2px solid ${C.border}`}}>
+                <td style={{padding:"10px 12px",position:"sticky",left:0,background:C.charcoal}}>
+                  <div style={{fontSize:11,color:C.midGray,textTransform:"uppercase",letterSpacing:1}}>Wages</div>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:C.red}}>${wt.wage.toFixed(2)}</div>
+                  <div style={{fontSize:11,color:C.midGray,textTransform:"uppercase",letterSpacing:1,marginTop:4}}>Hours</div>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16}}>{wt.hrs.toFixed(2)}</div>
+                </td>
+                {days.map((d,i)=>{
+                  const dk=fmtKey(d);
+                  const dt=dayTotals(dk);
+                  return (
+                    <td key={i} style={{padding:"10px 8px",textAlign:"center",verticalAlign:"top"}}>
+                      <div style={{fontSize:11,color:C.midGray}}><span style={{color:C.white}}>{dt.count}</span> staff</div>
+                      <div style={{fontSize:12,color:C.red,fontWeight:700,marginTop:2}}>${dt.wage.toFixed(2)}</div>
+                      <div style={{fontSize:11,color:C.midGray}}>{dt.hrs.toFixed(2)} hrs</div>
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── ADD SHIFT MODAL ──────────────────────────────────────────────────────────
-function AddShiftModal({date,employees,onSave,onClose}){
-  const [empId,setEmpId]=useState(employees[0]?.auth_id||employees[0]?.id||"");
+function AddShiftModal({date,employees,defaultEmpId,onSave,onClose}){
+  const [empId,setEmpId]=useState(defaultEmpId||employees[0]?.auth_id||employees[0]?.id||"");
   const [type,setType]=useState("Morning");
   const [start,setStart]=useState("09:00");
   const [end,setEnd]=useState("17:00");
@@ -328,7 +509,8 @@ export default function App(){
   const [toReq,setToReq]=useState({from:"",to:"",reason:""});
 
   // Schedule modal
-  const [shiftModal,setShiftModal]=useState(null); // {year,month,day}
+  const [shiftModal,setShiftModal]=useState(null); // {date, empId}
+  const [scheduleView,setScheduleView]=useState("week");
 
   // Edit employee modal
   const [editEmp,setEditEmp]=useState(null);
@@ -961,19 +1143,35 @@ export default function App(){
         {tab==="schedule"&&(
           <div style={{display:"flex",flexDirection:"column",gap:20}}>
             {isAdmin&&(
-              <div style={{padding:"10px 16px",background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:4,fontSize:13,color:C.lightGray}}>
-                📅 <strong>Admin:</strong> Click any future date on the calendar to add a shift for an employee.
+              <div style={{padding:"10px 16px",background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:4,fontSize:13,color:C.lightGray,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+                <span>📅 <strong>Admin:</strong> Click any cell to add a shift for an employee.</span>
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>setScheduleView("week")} style={{background:scheduleView==="week"?C.red:"transparent",color:scheduleView==="week"?C.white:C.midGray,border:`1px solid ${C.red}55`,borderRadius:2,padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>Week</button>
+                  <button onClick={()=>setScheduleView("month")} style={{background:scheduleView==="month"?C.red:"transparent",color:scheduleView==="month"?C.white:C.midGray,border:`1px solid ${C.red}55`,borderRadius:2,padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'Barlow',sans-serif"}}>Month</button>
+                </div>
               </div>
             )}
             <Card>
-              <ScheduleCalendar
-                shifts={shifts}
-                employees={employees}
-                isAdmin={isAdmin}
-                myEmpId={authUser?.id}
-                onAddShift={(y,m,d)=>setShiftModal(new Date(y,m,d))}
-                onDeleteShift={handleDeleteShift}
-              />
+              {scheduleView==="week"||!isAdmin?(
+                <WeekGrid
+                  shifts={shifts}
+                  employees={employees}
+                  sessions={sessions}
+                  isAdmin={isAdmin}
+                  authUserId={authUser?.id}
+                  onAddShift={(y,m,d,empId)=>setShiftModal({date:new Date(y,m,d),empId})}
+                  onDeleteShift={handleDeleteShift}
+                />
+              ):(
+                <ScheduleCalendar
+                  shifts={shifts}
+                  employees={employees}
+                  isAdmin={isAdmin}
+                  myEmpId={authUser?.id}
+                  onAddShift={(y,m,d)=>setShiftModal({date:new Date(y,m,d)})}
+                  onDeleteShift={handleDeleteShift}
+                />
+              )}
             </Card>
 
             {/* Upcoming shifts list for employee */}
@@ -1261,8 +1459,9 @@ export default function App(){
     {/* SHIFT MODAL */}
     {shiftModal&&(
       <AddShiftModal
-        date={shiftModal}
-        employees={employees.filter(e=>e.role!=="Pending")}
+        date={shiftModal.date}
+        defaultEmpId={shiftModal.empId}
+        employees={employees.filter(e=>e.role!=="Pending"&&e.role!=="Terminated")}
         onSave={handleAddShift}
         onClose={()=>setShiftModal(null)}
       />
