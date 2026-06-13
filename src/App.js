@@ -34,6 +34,16 @@ const elapsed = start => {
   return `${String(Math.floor(s/3600)).padStart(2,"0")}:${String(Math.floor((s%3600)/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
 };
 const hoursWorked = (a,b) => ((b-a)/3600000).toFixed(2);
+const toLocalInput = (iso) => {
+  if(!iso) return "";
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const fromLocalInput = (val) => {
+  if(!val) return null;
+  return new Date(val).toISOString();
+};
 const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
@@ -597,6 +607,7 @@ export default function App(){
 
   // Edit employee modal
   const [editEmp,setEditEmp]=useState(null);
+  const [editSession,setEditSession]=useState(null); // {id, clock_in, clock_out, emp_id, ...}
   const [deleteConfirm,setDeleteConfirm]=useState(null); // emp object to confirm delete
 
   const activeSess=sessions.find(s=>s.emp_id===authUser?.id&&!s.clock_out);
@@ -821,6 +832,20 @@ export default function App(){
     });
   };
 
+
+  // ── EDIT SESSION (timecard correction) ───────────────────────────────────
+  const saveEditSession=async()=>{
+    if(!editSession) return;
+    const updates={
+      clock_in: editSession.clock_in,
+      clock_out: editSession.clock_out || null,
+    };
+    const {data,error}=await supabase.from("sessions").update(updates).eq("id",editSession.id).select().single();
+    if(error){ showToast("Failed to update timecard","error"); return; }
+    setSessions(s=>s.map(x=>x.id===editSession.id?data:x));
+    setEditSession(null);
+    showToast("Timecard updated");
+  };
 
   // ── DELETE EMPLOYEE ───────────────────────────────────────────────────────
   const deleteEmployee=async(emp)=>{
@@ -1429,7 +1454,7 @@ export default function App(){
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                   <thead>
                     <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                      {["Employee","Role","Date","Clock In","Clock Out","Hours","Earnings","Location"].map(h=>(
+                      {["Employee","Role","Date","Clock In","Clock Out","Hours","Earnings","Location",...(isAdmin?["Edit"]:[])].map(h=>(
                         <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:10,fontWeight:700,color:C.midGray,letterSpacing:1.5,textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>
                       ))}
                     </tr>
@@ -1448,6 +1473,11 @@ export default function App(){
                           <td style={{padding:"10px 12px",fontFamily:"'Bebas Neue',sans-serif",letterSpacing:1}}>{hrs?`${hrs}h`:"—"}</td>
                           <td style={{padding:"10px 12px",fontFamily:"'Bebas Neue',sans-serif",color:C.red,letterSpacing:1}}>{hrs&&emp?`$${(hrs*emp.wage).toFixed(2)}`:"—"}</td>
                           <td style={{padding:"10px 12px",fontSize:11,color:C.midGray}}>{s.lat?`${parseFloat(s.lat).toFixed(4)},${parseFloat(s.lng).toFixed(4)}`:"N/A"}</td>
+                          {isAdmin&&(
+                            <td style={{padding:"10px 12px"}}>
+                              <button onClick={()=>setEditSession({...s})} style={{background:"transparent",border:`1px solid ${C.borderLight}`,borderRadius:2,color:C.midGray,cursor:"pointer",padding:"4px 10px",fontSize:12,fontFamily:"'Barlow',sans-serif",fontWeight:600}}>✏ Edit</button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -1584,6 +1614,29 @@ export default function App(){
           <div style={{display:"flex",gap:12}}>
             <button onClick={()=>setDeleteConfirm(null)} style={{flex:1,padding:"12px",background:"transparent",border:"1px solid #2a2a2a",borderRadius:2,color:"#9E9E9E",cursor:"pointer",fontFamily:"'Barlow',sans-serif",fontWeight:700,fontSize:14}}>Cancel</button>
             <button onClick={()=>deleteEmployee(deleteConfirm)} style={{flex:1,padding:"12px",background:"#D32F2F",border:"none",borderRadius:2,color:"#fff",cursor:"pointer",fontFamily:"'Barlow',sans-serif",fontWeight:700,fontSize:14,letterSpacing:.5}}>Yes, Terminate</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* EDIT TIMECARD MODAL */}
+    {editSession&&(
+      <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{background:C.charcoal,border:`1px solid ${C.border}`,borderRadius:4,padding:28,width:"100%",maxWidth:420,animation:"tickIn .2s ease"}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:2,marginBottom:6}}>EDIT TIMECARD</div>
+          <div style={{fontSize:13,color:C.midGray,marginBottom:20}}>
+            {employees.find(e=>e.auth_id===editSession.emp_id)?.name??"Unknown employee"}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <Field label="Clock In" type="datetime-local" value={toLocalInput(editSession.clock_in)} onChange={e=>setEditSession(x=>({...x,clock_in:fromLocalInput(e.target.value)}))}/>
+            <Field label="Clock Out (leave blank if still active)" type="datetime-local" value={toLocalInput(editSession.clock_out)} onChange={e=>setEditSession(x=>({...x,clock_out:fromLocalInput(e.target.value)}))}/>
+            <div style={{fontSize:12,color:C.midGray,lineHeight:1.6,background:"#ffffff08",borderRadius:2,padding:"8px 12px"}}>
+              ℹ Editing this timecard will recalculate the employee's hours and earnings for this session.
+            </div>
+          </div>
+          <div style={{display:"flex",gap:12,marginTop:20}}>
+            <Btn full onClick={saveEditSession}>Save Changes</Btn>
+            <Btn full variant="ghost" onClick={()=>setEditSession(null)}>Cancel</Btn>
           </div>
         </div>
       </div>
