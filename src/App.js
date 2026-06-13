@@ -740,12 +740,26 @@ export default function App(){
   // ── ADMIN: Add/Edit Employee ──────────────────────────────────────────────────
   const addEmployee=async()=>{
     if(!newEmp.name||!newEmp.wage) return;
-    // Check for duplicate name or email
-    const dupName=employees.find(e=>e.name.toLowerCase()===newEmp.name.trim().toLowerCase()&&e.role!=="Terminated");
-    if(dupName){showToast(`${newEmp.name} already exists as an active employee`,"error");return;}
+    // Check for duplicate name or email (including terminated employees)
+    const dupName=employees.find(e=>e.name.toLowerCase()===newEmp.name.trim().toLowerCase());
+    if(dupName){
+      if(dupName.role==="Terminated"){
+        showToast(`${newEmp.name} already exists as a terminated employee. Reactivate them from the Terminated section instead of adding a duplicate.`,"error");
+      } else {
+        showToast(`${newEmp.name} already exists as an active employee`,"error");
+      }
+      return;
+    }
     if(newEmp.email){
-      const dupEmail=employees.find(e=>e.email&&e.email.toLowerCase()===newEmp.email.trim().toLowerCase()&&e.role!=="Terminated");
-      if(dupEmail){showToast("An active employee with that email already exists","error");return;}
+      const dupEmail=employees.find(e=>e.email&&e.email.toLowerCase()===newEmp.email.trim().toLowerCase());
+      if(dupEmail){
+        if(dupEmail.role==="Terminated"){
+          showToast(`An employee with that email already exists but is terminated. Reactivate them instead.`,"error");
+        } else {
+          showToast("An active employee with that email already exists","error");
+        }
+        return;
+      }
     }
     const parts=newEmp.name.trim().split(" ");
     const initials=(parts[0][0]+(parts[1]?parts[1][0]:"")).toUpperCase();
@@ -1433,6 +1447,9 @@ export default function App(){
                             <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#9E9E9E",marginTop:2}}>{v}</div>
                           </div>
                         ))}
+                      </div>
+                      <div style={{marginTop:12}}>
+                        <Btn full size="sm" variant="ghost" onClick={()=>setEditEmp({...emp,role:roles[0]})}>↻ Reactivate Employee</Btn>
                       </div>
                     </div>
                   );
